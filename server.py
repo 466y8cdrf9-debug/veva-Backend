@@ -2,6 +2,7 @@ import os
 import io
 import re
 import json
+import asyncio
 from datetime import datetime
 import httpx
 import requests
@@ -105,7 +106,8 @@ async def websocket_endpoint(websocket: WebSocket):
     
     try:
         while True:
-            data = await websocket.receive_json()
+            raw_data = await websocket.receive_text()
+            data = json.loads(raw_data)
             user_text = data.get("text", "").strip()
             
             if not user_text:
@@ -130,7 +132,6 @@ async def websocket_endpoint(websocket: WebSocket):
             raw_reply = chat_completion.choices[0].message.content.strip()
             action_data = extract_json_payload(raw_reply)
 
-            # Web scraping handled directly in cloud
             if action_data and action_data.get("type") == "web_read":
                 scraped_answer = scrape_webpage(action_data.get("url", ""), action_data.get("query", ""))
                 reply_text = scraped_answer
@@ -141,7 +142,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
             conversation_history.append({"role": "assistant", "content": reply_text})
 
-            # Generate Edge-TTS audio stream in cloud
             clean_speech = clean_text_for_speech(reply_text) or "Done Boss."
             communicate = edge_tts.Communicate(clean_speech, VOICE_MODEL, rate="+6%", pitch="+1Hz")
             audio_bytes = bytearray()
@@ -149,11 +149,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 if chunk["type"] == "audio":
                     audio_bytes.extend(chunk["data"])
 
-            await websocket.send_json({
+            await websocket.send_text(json.dumps({
                 "text": reply_text,
                 "action": action_payload,
                 "audio_bytes": list(audio_bytes)
-            })
+            }))
 
     except WebSocketDisconnect:
         pass
+    except Exception as e:
+        print(f"[!] Server Error: {e}")
